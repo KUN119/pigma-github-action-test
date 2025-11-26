@@ -1,0 +1,8 @@
+:root {
+  --primary-5: #F7F9FF;
+  --primary-10: #EDF1FF;
+  --semibold: 400;
+  --text-font-weight: var(--semibold);
+  --text-font-size: var(--number-2);
+  --number-2: 2;
+}

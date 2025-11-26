@@ -1,47 +1,87 @@
-import StyleDictionary from 'style-dictionary'
+/* eslint-disable no-undef */
+import fs from "fs";
 
-// Style Dictionary 설정 객체
-const config = {
-  // 1. 소스: Tokens Studio에서 내보낸 JSON 파일 경로
-  source: ['tokens/**/*.json'],
-  log: {
-    verbosity: 'verbose' // 에러 난 토큰 이름을 다 보여줌
-  },
+const INPUT = "./tokens/tokens.json";
+const OUTPUT = "./src/styles/variables.css";
 
-  // 2. 플랫폼 설정
-  platforms: {
-    css: {
-      transformGroup: 'css',
-      buildPath: 'src/styles/',
-      files: [
-        {
-          destination: 'variables.css',
-          format: 'css/variables',
-          options: {
-            outputReferences: true
-          }
-        }
-      ]
+/** kebab-case 변환 */
+const toKebab = (str) =>
+  str
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
+    .replace(/\./g, "-")
+    .toLowerCase();
+
+/** 피그마 tokens.json에서 global 풀기 */
+function unwrapGlobal(tokens) {
+  return tokens.global || tokens;
+}
+
+/** 객체인지 여부 */
+const isObject = (obj) => obj && typeof obj === "object" && !Array.isArray(obj);
+
+/**
+ * 재귀적으로 CSS 변수로 변환
+ * prefix: key 경로
+ */
+function flattenTokens(obj, prefix = "") {
+  const result = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    const newKey = prefix ? `${prefix}-${key}` : key;
+
+    // $value, $type 있는 경우 → 내부값 사용
+    if (value && typeof value === "object" && "$value" in value) {
+      const val = value.$value;
+
+      if (isObject(val)) {
+        // typography 같은 객체 구조
+        Object.assign(result, flattenTokens(val, newKey));
+      } else {
+        result[newKey] = val;
+      }
+    } else if (isObject(value)) {
+      Object.assign(result, flattenTokens(value, newKey));
+    } else {
+      result[newKey] = value;
     }
   }
+
+  return result;
 }
 
-// 메인 실행 함수 (v4부터는 비동기로 작동하므로 async/await 필요)
-async function build() {
-  try {
-    // v4 방식: 인스턴스 생성
-    const sd = new StyleDictionary(config)
+/** CSS 변수 생성 */
+function generateCSS(vars) {
+  let css = ":root {\n";
 
-    // 빌드 실행 (await 필수)
-    await sd.buildAllPlatforms()
+  for (const [key, value] of Object.entries(vars)) {
+    const kebab = toKebab(key);
 
-    console.log('\n==============================================')
-    console.log('✅  Design Tokens generated successfully!')
-    console.log('==============================================\n')
-  } catch (error) {
-    console.error('\n❌  Error generating tokens:', error)
+    // 참조값 변경 {number-2} → var(--number-2)
+    const formatted =
+      typeof value === "string"
+        ? value.replace(
+            /\{(.+?)\}/g,
+            (_, tokenRef) => `var(--${toKebab(tokenRef)})`
+          )
+        : value;
+
+    css += `  --${kebab}: ${formatted};\n`;
   }
+
+  css += "}\n";
+  return css;
 }
 
-// 실행
-build()
+/** 실행 */
+function build() {
+  const data = JSON.parse(fs.readFileSync(INPUT, "utf-8"));
+
+  const unwrapped = unwrapGlobal(data);
+  const flatTokens = flattenTokens(unwrapped);
+  const css = generateCSS(flatTokens);
+
+  fs.writeFileSync(OUTPUT, css, "utf-8");
+  console.log("🎨 tokens → CSS 변환 완료!");
+}
+
+build();
