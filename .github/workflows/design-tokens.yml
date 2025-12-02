@@ -27,7 +27,7 @@ jobs:
 
       # 1) 토큰 변환 실행 (build.js 실행)
       - name: Generate Design Tokens
-        run: npm run build
+        run: npm run build:tokens
 
       # 2) CSS 파일만 자동 커밋
       - name: Commit Changes

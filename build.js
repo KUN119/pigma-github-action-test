@@ -1,87 +1,89 @@
-/* eslint-disable no-undef */
-import fs from "fs";
-
-const INPUT = "./tokens/tokens.json";
-const OUTPUT = "./src/styles/variables.css";
-
-/** kebab-case 변환 */
-const toKebab = (str) =>
-  str
-    .replace(/([a-z])([A-Z])/g, "$1-$2")
-    .replace(/\./g, "-")
-    .toLowerCase();
-
-/** 피그마 tokens.json에서 global 풀기 */
-function unwrapGlobal(tokens) {
-  return tokens.global || tokens;
-}
-
-/** 객체인지 여부 */
-const isObject = (obj) => obj && typeof obj === "object" && !Array.isArray(obj);
+import StyleDictionary from "style-dictionary";
 
 /**
- * 재귀적으로 CSS 변수로 변환
- * prefix: key 경로
+ * 토큰 객체를 순회(Recursion)하며 데이터를 정제하는 헬퍼 함수
+ * 1. $type: 'boxShadow' -> 'shadow' 변경
+ * 2. 불필요한 'type' 속성 삭제
  */
-function flattenTokens(obj, prefix = "") {
-  const result = {};
+function sanitizeTokens(obj) {
+  for (const key in obj) {
+    const node = obj[key];
 
-  for (const [key, value] of Object.entries(obj)) {
-    const newKey = prefix ? `${prefix}-${key}` : key;
-
-    // $value, $type 있는 경우 → 내부값 사용
-    if (value && typeof value === "object" && "$value" in value) {
-      const val = value.$value;
-
-      if (isObject(val)) {
-        // typography 같은 객체 구조
-        Object.assign(result, flattenTokens(val, newKey));
-      } else {
-        result[newKey] = val;
+    // 객체인 경우에만 탐색 (null 체크 포함)
+    if (typeof node === "object" && node !== null) {
+      // 1. $type 변경 로직
+      if (node.$type === "boxShadow") {
+        node.$type = "shadow";
       }
-    } else if (isObject(value)) {
-      Object.assign(result, flattenTokens(value, newKey));
-    } else {
-      result[newKey] = value;
+
+      // 2. 레거시 type 속성 제거
+      if ("type" in node) {
+        delete node.type;
+      }
+
+      // 3. 재귀 호출 (자식 노드 탐색)
+      sanitizeTokens(node);
     }
   }
-
-  return result;
 }
 
-/** CSS 변수 생성 */
-function generateCSS(vars) {
-  let css = ":root {\n";
+// global 제거
+// $type: 'boxShadow' -> $type: 'shadow'로 변환
+StyleDictionary.registerPreprocessor({
+  name: "remove-global",
+  preprocessor: (dictionary) => {
+    // 1. 구조 분해: global과 나머지(rest) 분리
+    const { global, ...rest } = dictionary;
 
-  for (const [key, value] of Object.entries(vars)) {
-    const kebab = toKebab(key);
+    // 2. 병합: global의 내용을 밖으로 꺼내어 rest와 합침
+    // (기존 코드의 의도를 살려 global의 내용이 rest와 동등한 레벨로 올라오도록 병합)
+    const mergedDictionary = { ...global, ...rest };
 
-    // 참조값 변경 {number-2} → var(--number-2)
-    const formatted =
-      typeof value === "string"
-        ? value.replace(
-            /\{(.+?)\}/g,
-            (_, tokenRef) => `var(--${toKebab(tokenRef)})`
-          )
-        : value;
+    // 3. 깊은 복사: 원본 객체 보호 및 안전한 변형을 위해 복제
+    const finalDictionary = JSON.parse(JSON.stringify(mergedDictionary));
 
-    css += `  --${kebab}: ${formatted};\n`;
+    // 4. 정제 함수 실행: 분리한 함수를 호출하여 전체 토큰을 수정
+    sanitizeTokens(finalDictionary);
+
+    return finalDictionary;
+  },
+});
+
+// variables.css
+const config = {
+  source: ["tokens/tokens.json"],
+  log: {
+    verbosity: "verbose",
+  },
+  platforms: {
+    css: {
+      preprocessors: ["remove-global"],
+      transformGroup: "css",
+      transforms: ["name/kebab", "typography/css/shorthand"],
+      buildPath: "src/styles/",
+      files: [
+        {
+          destination: "variables.css",
+          format: "css/variables",
+          options: {
+            outputReferences: true,
+          },
+        },
+      ],
+    },
+  },
+};
+
+async function build() {
+  try {
+    const sd = new StyleDictionary(config);
+    await sd.buildAllPlatforms();
+    console.log("\n==============================================");
+    console.log("✅  Design Tokens generated!");
+    console.log("==============================================\n");
+  } catch (error) {
+    console.error("\n❌  Build failed:", error);
   }
-
-  css += "}\n";
-  return css;
-}
-
-/** 실행 */
-function build() {
-  const data = JSON.parse(fs.readFileSync(INPUT, "utf-8"));
-
-  const unwrapped = unwrapGlobal(data);
-  const flatTokens = flattenTokens(unwrapped);
-  const css = generateCSS(flatTokens);
-
-  fs.writeFileSync(OUTPUT, css, "utf-8");
-  console.log("🎨 tokens → CSS 변환 완료!");
 }
 
 build();
